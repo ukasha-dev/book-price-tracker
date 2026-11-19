@@ -30,7 +30,7 @@ docker-compose exec app python -m app.scraper
 
 Use `exec`, not `run`: `run` replaces the container's start command and skips the database migration, so on a fresh clone the table would not exist.
 
-Both ways scrape about 1,000 books, which takes one to two minutes depending on your connection. Running them again updates the existing rows (price and `scraped_at`) and never creates duplicates.
+Both ways scrape about 1,000 books, which takes one to two minutes depending on your connection. Running them again refreshes the existing rows (title, price, rating, category, availability and `scraped_at`) and never creates duplicates.
 
 ## API endpoints
 
@@ -96,6 +96,21 @@ curl "http://localhost:8000/books?min_price=10&max_price=15&limit=5&offset=10"
 curl http://localhost:8000/books/1
 ```
 
+```json
+{
+  "id": 1,
+  "source_url": "https://books.toscrape.com/catalogue/its-only-the-himalayas_981/index.html",
+  "title": "It's Only the Himalayas",
+  "price": 45.17,
+  "rating": 2,
+  "category": "Travel",
+  "availability": "In stock",
+  "scraped_at": "2026-11-19T18:07:39.727714Z"
+}
+```
+
+An unknown id returns `404` with `{"detail": "Book not found"}`.
+
 ### Trigger a scrape
 
 ```bash
@@ -124,7 +139,7 @@ The request blocks until the scrape finishes.
 
 ## Configuration
 
-Docker Compose works without any setup. To change a value, copy `.env.example` to `.env` and edit it. The defaults are for local development only.
+Credentials are never hardcoded in the application: it only reads `DATABASE_URL` from the environment. `docker-compose.yml` fills each value from the environment or a `.env` file and falls back to a development default, so that `docker-compose up` also works on a fresh clone with no setup. To use your own values, copy `.env.example` to `.env` and edit it. Do not use the defaults outside local development.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -142,6 +157,7 @@ The app itself reads `DATABASE_URL`, which Compose builds from the values above.
 - **Error handling:** a page that fails to load after retries is logged and counted in `failed_pages`, and the run continues. A card with a missing field is skipped and counted in `skipped`. If the home page cannot be reached the scrape fails with a 502 and writes nothing.
 - **Schema:** one `books` table with a unique `source_url`, a `NUMERIC(10,2)` price, a rating check from 1 to 5, and indexes on `category` and `price`. It is created by an Alembic migration that runs when the container starts. Category is a plain column because the task only needs it as a filter; a separate table would be the next step if categories needed their own data.
 - **Pagination:** `limit` and `offset`, ordered by `id` so pages are stable.
+- **Category filter:** matches the exact name in any case by comparing `lower(category)`. That comparison cannot use the plain index on `category`, which only serves exact-case matches. At about 1,000 rows this makes no difference; a functional index on `lower(category)` would be the fix for a much larger table.
 - **Scraping from the API:** `POST /scrape` blocks until the run finishes. A lock returns 409 for a second concurrent run. The lock lives in the process, so the app runs with a single uvicorn worker. In production I would run the scrape as a background task in a queue such as Celery and return a task id.
 
 ## Project layout
