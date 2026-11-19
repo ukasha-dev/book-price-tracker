@@ -2,7 +2,7 @@ import logging
 
 from app.database import SessionLocal
 from app.logging_setup import configure_logging
-from app.scraper.runner import run_scrape
+from app.scraper.runner import ScrapeUnavailable, run_scrape
 
 logger = logging.getLogger(__name__)
 
@@ -10,7 +10,11 @@ logger = logging.getLogger(__name__)
 def main() -> None:
     configure_logging()
     with SessionLocal() as db:
-        result = run_scrape(db)
+        try:
+            result = run_scrape(db)
+        except ScrapeUnavailable as error:
+            logger.error("Scrape failed: %s", error)
+            raise SystemExit(1) from error
     logger.info("Scrape finished: %s", result.model_dump())
 
 

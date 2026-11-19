@@ -1,6 +1,7 @@
 import pytest
 import requests
 
+from app.scraper import __main__ as entrypoint
 from app.scraper import runner
 from app.scraper.client import get_html
 from app.scraper.parser import parse_category_urls
@@ -31,6 +32,18 @@ def test_failed_category_page_counted_not_fatal(monkeypatch, load_fixture):
 
     assert len(outcome.books) == 19
     assert outcome.failed_pages == 49
+
+
+def test_script_exits_with_error_when_site_unreachable(monkeypatch):
+    def unavailable(db):
+        raise ScrapeUnavailable("site is down")
+
+    monkeypatch.setattr(entrypoint, "run_scrape", unavailable)
+
+    with pytest.raises(SystemExit) as exit_info:
+        entrypoint.main()
+
+    assert exit_info.value.code == 1
 
 
 def test_home_page_failure_raises_scrape_unavailable(monkeypatch):
