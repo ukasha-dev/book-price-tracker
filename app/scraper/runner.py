@@ -1,9 +1,14 @@
 import logging
+import time
 from dataclasses import dataclass, field
 
 import requests
+from sqlalchemy.orm import Session
 
-from app.scraper.client import get_html
+from app.config import get_settings
+from app.crud import upsert_books
+from app.schemas import ScrapeResult
+from app.scraper.client import get_html, make_session
 from app.scraper.parser import (
     ScrapedBook,
     next_page_url,
@@ -35,6 +40,19 @@ def scrape_all(session: requests.Session, base_url: str, timeout: float) -> Scra
     for category_url in parse_category_urls(home_html, base_url):
         _scrape_category(session, category_url, timeout, outcome)
     return outcome
+
+
+def run_scrape(db: Session) -> ScrapeResult:
+    settings = get_settings()
+    started = time.perf_counter()
+    outcome = scrape_all(make_session(), settings.scrape_base_url, settings.request_timeout)
+    upsert_books(db, outcome.books)
+    return ScrapeResult(
+        scraped=len(outcome.books),
+        skipped=outcome.skipped,
+        failed_pages=outcome.failed_pages,
+        duration_seconds=round(time.perf_counter() - started, 2),
+    )
 
 
 def _scrape_category(
