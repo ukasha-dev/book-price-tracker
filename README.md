@@ -1,63 +1,61 @@
 # Book Price Tracker API
 
-A small backend service that scrapes book data from [books.toscrape.com](https://books.toscrape.com), stores it in PostgreSQL and serves it through a REST API built with FastAPI.
+Scrapes book data from [books.toscrape.com](https://books.toscrape.com), saves it to Postgres, and serves it over a FastAPI REST API.
 
-## Demo
+Demo video: [watch the walkthrough](https://www.loom.com/share/f513eebd1aff41cc9cb3b3e6aa2c1a48)
 
-[Watch the walkthrough video](https://www.loom.com/share/f513eebd1aff41cc9cb3b3e6aa2c1a48)
+## Run it
 
-## Quick start
-
-Requires Docker and Docker Compose.
+You need Docker and Docker Compose.
 
 ```bash
 docker-compose up
 ```
 
-The API is then available at http://localhost:8000 and the interactive docs at http://localhost:8000/docs. Use `docker-compose up --build` after changing the code.
+The API runs at http://localhost:8000 and the docs are at http://localhost:8000/docs. If you change the code, rebuild with `docker-compose up --build`.
 
-The database starts empty, so `GET /books` returns no items at first. Call `POST /scrape` (or run the scraper, below) to load the data.
+The database starts empty, so `GET /books` returns nothing until you run a scrape (see below).
 
-## Running the scraper
+## Scraping
 
-Through the API:
+Trigger it through the API:
 
 ```bash
 curl -X POST http://localhost:8000/scrape
 ```
 
-As a standalone script, with the stack running:
+Or run it as a script while the stack is running:
 
 ```bash
 docker-compose exec app python -m app.scraper
 ```
 
-Use `exec`, not `run`: `run` replaces the container's start command and skips the database migration, so on a fresh clone the table would not exist.
+Use `exec`, not `run`. `run` overrides the container's start command and skips the migration, so the table won't exist on a fresh clone.
 
-Both ways scrape about 1,000 books, which takes one to two minutes depending on your connection. Running them again refreshes the existing rows (title, price, rating, category, availability and `scraped_at`) and never creates duplicates.
+A full scrape pulls about 1,000 books and takes one to two minutes. Running it again updates existing rows instead of creating duplicates.
 
-## API endpoints
+## Endpoints
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/books` | List books with pagination and optional filters |
+| GET | `/books` | List books, with pagination and filters |
 | GET | `/books/{id}` | Get one book |
 | POST | `/scrape` | Run the scraper and update the database |
 
-`GET /books` query parameters:
+Query parameters for `GET /books`:
 
 | Parameter | Default | Description |
 |---|---|---|
 | `limit` | 20 | Page size, 1 to 100 |
 | `offset` | 0 | Number of books to skip |
-| `category` | | Exact category name, case-insensitive |
+| `category` | | Category name, not case sensitive |
 | `min_price` | | Minimum price, inclusive |
 | `max_price` | | Maximum price, inclusive |
 
 ### List books
 
 ```bash
-curl "http://localhost:8000/books?limit=2"
+curl "http://localhost:8000/books?limit=1"
 ```
 
 ```json
@@ -75,12 +73,10 @@ curl "http://localhost:8000/books?limit=2"
     }
   ],
   "total": 1000,
-  "limit": 2,
+  "limit": 1,
   "offset": 0
 }
 ```
-
-(The response lists `limit` items; one is shown here.)
 
 ### Filter by category
 
@@ -113,9 +109,7 @@ curl http://localhost:8000/books/1
 }
 ```
 
-An unknown id returns `404` with `{"detail": "Book not found"}`.
-
-### Trigger a scrape
+### Run a scrape
 
 ```bash
 curl -X POST http://localhost:8000/scrape
@@ -132,7 +126,7 @@ curl -X POST http://localhost:8000/scrape
 
 The request blocks until the scrape finishes.
 
-### Errors
+### Error responses
 
 | Status | When |
 |---|---|
@@ -143,26 +137,28 @@ The request blocks until the scrape finishes.
 
 ## Configuration
 
-Credentials are never hardcoded in the application: it only reads `DATABASE_URL` from the environment. `docker-compose.yml` fills each value from the environment or a `.env` file and falls back to a development default, so that `docker-compose up` also works on a fresh clone with no setup. To use your own values, copy `.env.example` to `.env` and edit it. Do not use the defaults outside local development.
+Docker Compose reads these variables from your environment or a `.env` file. If they aren't set, it uses default dev values so `docker-compose up` works on a fresh clone. To set your own, copy `.env.example` to `.env` and edit it. The defaults are for local use only.
 
 | Variable | Default | Description |
 |---|---|---|
 | `POSTGRES_USER` | `bookuser` | Database user |
 | `POSTGRES_PASSWORD` | `bookpass` | Database password |
 | `POSTGRES_DB` | `bookdb` | Database name |
-| `APP_PORT` | `8000` | Host port for the API |
+| `APP_PORT` | `8000` | Port the API is published on |
 
-The app itself reads `DATABASE_URL`, which Compose builds from the values above.
+The app itself only reads `DATABASE_URL`, which Compose builds from these values.
 
-## Design decisions
+## How it works
 
-- **Scraping:** `requests` and BeautifulSoup. The site is static HTML, so no browser or framework is needed. The crawler walks the 50 category pages (about 65 requests) because every listing card already has title, price, rating and availability, and the page tells the category. Visiting all 1,000 detail pages would take about 16 times more requests.
-- **No duplicates:** each book is keyed by its product URL, which is unique and stable, and written with `INSERT ... ON CONFLICT DO UPDATE`.
-- **Error handling:** a page that fails to load after retries is logged and counted in `failed_pages`, and the run continues. A card with a missing field is skipped and counted in `skipped`. If the home page cannot be reached the scrape fails with a 502 and writes nothing.
-- **Schema:** one `books` table with a unique `source_url`, a `NUMERIC(10,2)` price, a rating check from 1 to 5, and indexes on `category` and `price`. It is created by an Alembic migration that runs when the container starts. Category is a plain column because the task only needs it as a filter; a separate table would be the next step if categories needed their own data.
-- **Pagination:** `limit` and `offset`, ordered by `id` so pages are stable.
-- **Category filter:** matches the exact name in any case by comparing `lower(category)`. That comparison cannot use the plain index on `category`, which only serves exact-case matches. At about 1,000 rows this makes no difference; a functional index on `lower(category)` would be the fix for a much larger table.
-- **Scraping from the API:** `POST /scrape` blocks until the run finishes. A lock returns 409 for a second concurrent run. The lock lives in the process, so the app runs with a single uvicorn worker. In production I would run the scrape as a background task in a queue such as Celery and return a task id.
+I used `requests` and BeautifulSoup since the site is just static HTML. Instead of opening every single book page, the scraper crawls the category pages, which already list all the fields and give you the category. That cuts down the number of requests a lot.
+
+To avoid duplicates, each book is matched by its product URL and saved with `INSERT ... ON CONFLICT DO UPDATE`. If a page still fails after retries, I log it, bump `failed_pages`, and keep going. Any book missing a field gets skipped and counted in `skipped`. If the home page can't be reached at all, nothing gets written and the API returns 502.
+
+There's a single `books` table with a unique `source_url`, a `NUMERIC(10,2)` price, a 1 to 5 rating check, and indexes on `category` and `price`. An Alembic migration creates it when the container starts.
+
+Category is just a plain column because I only use it for filtering. The filter compares `lower(category)`, which won't hit the plain index on `category`, though with about 1,000 rows that doesn't really matter.
+
+`POST /scrape` blocks until the scrape finishes, and an in-process lock returns 409 if another run is already going. Since that lock only works within one process, the app runs a single uvicorn worker. In production I'd move this to a background job like Celery and return a task id instead.
 
 ## Project layout
 
@@ -170,29 +166,31 @@ The app itself reads `DATABASE_URL`, which Compose builds from the values above.
 app/
   main.py          FastAPI app
   config.py        settings from environment variables
-  database.py      engine and session dependency
+  database.py      engine and session
   models.py        SQLAlchemy model
   schemas.py       Pydantic models
   crud.py          queries and the upsert
   routers/         /books and /scrape endpoints
-  scraper/         fetch client, HTML parser, crawl runner
+  scraper/         fetch client, HTML parser, crawler
 alembic/           database migration
-tests/             pytest suite with saved HTML fixtures
+tests/             pytest tests with saved HTML fixtures
 ```
 
 ## Tests and linting
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate      # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements-dev.txt
 pytest
 ruff check .
 ```
 
-The API tests use an in-memory SQLite database so they run without Docker; Postgres-specific behavior (upsert, migration, constraints) is verified against the real database in the Docker run.
+On Windows, activate the venv with `.venv\Scripts\activate`.
+
+The API tests run against an in-memory SQLite database so you don't need Docker. Postgres-specific stuff (the upsert, the migration, and the constraints) gets tested against the real database when running in Docker.
 
 ## Troubleshooting
 
-- **Changed database credentials have no effect:** the data volume keeps the credentials from its first start. Run `docker-compose down -v` to delete it, then start again.
-- **Port 8000 is busy:** set `APP_PORT` to another port in `.env`.
+- Changed database credentials have no effect: the data volume keeps the credentials from its first start. Run `docker-compose down -v` to wipe it, then start again.
+- Port 8000 is busy: set `APP_PORT` to another port in `.env`.
