@@ -2,6 +2,10 @@
 
 A small backend service that scrapes book data from [books.toscrape.com](https://books.toscrape.com), stores it in PostgreSQL and serves it through a REST API built with FastAPI.
 
+## Demo
+
+[Watch the walkthrough video](https://www.loom.com/share/f513eebd1aff41cc9cb3b3e6aa2c1a48)
+
 ## Quick start
 
 Requires Docker and Docker Compose.
